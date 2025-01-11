@@ -8,9 +8,11 @@ const User = require('./models/users');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
-const router = express.Router();
-const authRoutes = require('./routes/authRoutes')
+const Task = require('./models/task');
+const {authToken,checkAdminRole} = require('./middleware/authToken');
 
+
+// Load environment variables
 dotenv.config();
 const mongoURI = process.env.MONGO_URI;
 // Middleware to parse x-www-form-urlencoded data
@@ -42,13 +44,18 @@ app.post('/signup', async (req, res) => {
           if (user) {
             return res.status(400).json({ message: 'User already exists' });
           }
+          // hash the password
           const encryptPassword = await bcrypt.hash(password, 10);
           const newUser = new User({ name, email, password: encryptPassword, role });
           // generate token
-          const token = jwt.sign({ id: newUser._id }, process.env.SECRET, { expiresIn: '1h' });
+          const token = jwt.sign({ id: newUser._id, role:role }, process.env.SECRET, { expiresIn: '1h' });
           newUser.tokens = newUser.tokens.concat({ token });
           await newUser.save();
-          res.status(201).json({ message: 'User created successfully', token: token, user: newUser });
+          res.status(201).json({
+            message: 'User created successfully',
+            token,
+            user: { id: newUser._id, name, email, role },
+          });
         })
     } catch (err) {
       console.log(err);
@@ -88,6 +95,55 @@ app.post('/login', async (req, res) => {
     res.status(500).json({ message: 'Server Error' });
   }
 });
+
+app.post('/create/tasks',authToken,checkAdminRole,async (req, res) => {
+  const { title, description, status, assignedTo, project, deadline } = req.body;
+
+  // Default status if not provided
+  const taskStatus = status || 'Todo';
+
+  // Parse deadline
+  const parsedDeadline = new Date(deadline);
+  if (isNaN(parsedDeadline)) {
+    return res.status(400).json({ message: 'Invalid deadline format. Please use YYYY-MM-DD format.' });
+  }
+
+  // Validate required fields
+  if (!title) {
+    return res.status(400).json({ message: 'Title is required' });
+  }
+  if (!description) {
+    return res.status(400).json({ message: 'Description is required' });
+  }
+  if (!assignedTo) {
+    return res.status(400).json({ message: 'AssignedTo is required' });
+  }
+  if (!project) {
+    return res.status(400).json({ message: 'Project is required' });
+  }
+  if (!deadline) {
+    return res.status(400).json({ message: 'Deadline is required' });
+  }
+
+  try {
+    // Create and save the task
+    const task = new Task({
+      title,
+      description,
+      status: taskStatus,
+      assignedTo,
+      project,
+      deadline: parsedDeadline,
+    });
+
+    const savedTask = await task.save();
+    res.status(201).json({ message: 'Task created successfully', task: savedTask });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server Error' });
+  }
+}
+);
 
 // start the server listening for requests
 app.listen(process.env.PORT || 3000, 
